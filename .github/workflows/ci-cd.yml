@@ -1,0 +1,172 @@
+name: CI/CD Pipeline - Banking DevOps API
+
+on:
+  push:
+    branches:
+      - '**'  # Trigger on push to any branch
+  workflow_dispatch:  # Manual trigger
+
+env:
+  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/banking-devops-api
+  AKS_CLUSTER_NAME: aks-banking-cluster
+  AKS_RESOURCE_GROUP: rg-banking-devops
+  PYTHON_VERSION: '3.9'
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        working-directory: ./app
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Linter (Pylint)
+        working-directory: ./app
+        run: |
+          pylint app/*.py --disable=C0114,C0115,C0116 --max-line-length=120 || true
+        continue-on-error: true
+
+      - name: Run Tests (Pytest)
+        working-directory: ./app
+        run: |
+          pytest test_main.py -v --tb=short
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.DOCKER_IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.DOCKER_IMAGE }}:buildcache,mode=max
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: app/pytest-report.xml
+          if-no-files-found: ignore
+
+  deploy:
+    name: Deploy to AKS
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    # Only deploy on master branch or manual trigger
+    if: github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set AKS context
+        uses: azure/aks-set-context@v3
+        with:
+          resource-group: ${{ env.AKS_RESOURCE_GROUP }}
+          cluster-name: ${{ env.AKS_CLUSTER_NAME }}
+
+      - name: Update Kubernetes manifests with image tag
+        run: |
+          # Get the image tag from build job
+          IMAGE_TAG="${GITHUB_REF##*/}-${GITHUB_SHA::7}"
+          sed -i "s|image: .*banking-devops-api:.*|image: ${{ env.DOCKER_IMAGE }}:${IMAGE_TAG}|g" k8s/deployment.yaml
+
+      - name: Deploy to Kubernetes
+        uses: azure/k8s-deploy@v4
+        with:
+          manifests: |
+            k8s/namespace.yaml
+            k8s/deployment.yaml
+            k8s/service.yaml
+            k8s/hpa.yaml
+          images: |
+            ${{ env.DOCKER_IMAGE }}:${{ github.ref_name }}-${{ github.sha }}
+          namespace: default
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/banking-devops-api -n default --timeout=5m
+          kubectl get pods -n default -l app=banking-devops
+          kubectl get service banking-devops-service -n default
+
+      - name: Get LoadBalancer IP
+        id: get-ip
+        run: |
+          echo "Waiting for LoadBalancer IP..."
+          for i in {1..30}; do
+            EXTERNAL_IP=$(kubectl get service banking-devops-service -n default -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            if [ ! -z "$EXTERNAL_IP" ]; then
+              echo "LoadBalancer IP: $EXTERNAL_IP"
+              echo "external_ip=$EXTERNAL_IP" >> $GITHUB_OUTPUT
+              break
+            fi
+            sleep 10
+          done
+
+      - name: Test deployed service
+        if: steps.get-ip.outputs.external_ip != ''
+        run: |
+          EXTERNAL_IP=${{ steps.get-ip.outputs.external_ip }}
+          echo "Testing service at http://${EXTERNAL_IP}/health"
+          curl -f http://${EXTERNAL_IP}/health || echo "Health check failed, service might still be starting"
+
+  security-scan:
+    name: Security Scan
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: './app'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
