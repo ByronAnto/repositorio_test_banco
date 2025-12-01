@@ -51,7 +51,7 @@ async def generate_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API Key"
         )
-    
+
     token = jwt_manager.generate_jwt()
     return {
         "token": token,
@@ -74,7 +74,7 @@ async def token_stats(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API Key"
         )
-    
+
     return jwt_manager.get_stats()
 
 
@@ -102,7 +102,7 @@ def validate_security_headers(api_key: Optional[str], jwt_token: Optional[str]) 
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing JWT token"
         )
-    
+
     # Validate JWT and ensure it's unique (not used before)
     jwt_manager.validate_jwt(jwt_token)
 

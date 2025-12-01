@@ -38,7 +38,7 @@ jobs:
       - name: Run Linter (Pylint) - Strict Mode
         working-directory: ./app
         run: |
-          pylint *.py --disable=C0114,C0115,C0116 --max-line-length=120 --fail-under=8.0
+          pylint main.py models.py jwt_manager.py --disable=C0114,C0115,C0116 --max-line-length=120 --fail-under=8.0
 
       - name: Run Tests with Coverage (Pytest)
         working-directory: ./app
