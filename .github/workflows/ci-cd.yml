@@ -137,7 +137,6 @@ jobs:
           images: |
             ${{ env.DOCKER_IMAGE }}:latest
           namespace: default
-          skip-dockerfile-analysis: true
 
       - name: Verify deployment
         run: |
