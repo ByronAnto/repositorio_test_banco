@@ -26,7 +26,7 @@ variable "resource_group_name" {
 variable "location" {
   description = "Azure region for resources"
   type        = string
-  default     = "East US"
+  default     = "East US 2"
 }
 
 variable "cluster_name" {
@@ -49,7 +49,7 @@ variable "node_count" {
 variable "vm_size" {
   description = "Size of the virtual machines"
   type        = string
-  default     = "Standard_D2_v2"
+  default     = "Standard_B2s"
 }
 
 # Resource Group
@@ -120,6 +120,29 @@ resource "azurerm_log_analytics_workspace" "law" {
   }
 }
 
+# Azure Container Registry
+resource "azurerm_container_registry" "acr" {
+  name                = "acrbankingdevops"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
+  sku                 = "Basic"
+  admin_enabled       = true
+
+  tags = {
+    Environment = "Production"
+    Project     = "Banking-DevOps"
+    ManagedBy   = "Terraform"
+  }
+}
+
+# Role assignment to allow AKS to pull images from ACR
+resource "azurerm_role_assignment" "aks_acr_pull" {
+  principal_id                     = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
+  role_definition_name             = "AcrPull"
+  scope                            = azurerm_container_registry.acr.id
+  skip_service_principal_aad_check = true
+}
+
 # Outputs
 output "resource_group_name" {
   description = "Name of the resource group"
@@ -157,5 +180,27 @@ output "cluster_ca_certificate" {
 output "host" {
   description = "Kubernetes host"
   value       = azurerm_kubernetes_cluster.aks.kube_config[0].host
+  sensitive   = true
+}
+
+output "acr_name" {
+  description = "Name of the Azure Container Registry"
+  value       = azurerm_container_registry.acr.name
+}
+
+output "acr_login_server" {
+  description = "Login server URL for ACR"
+  value       = azurerm_container_registry.acr.login_server
+}
+
+output "acr_admin_username" {
+  description = "Admin username for ACR"
+  value       = azurerm_container_registry.acr.admin_username
+  sensitive   = true
+}
+
+output "acr_admin_password" {
+  description = "Admin password for ACR"
+  value       = azurerm_container_registry.acr.admin_password
   sensitive   = true
 }

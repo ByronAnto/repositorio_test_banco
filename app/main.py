@@ -10,6 +10,7 @@ from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
 
 from app.models import DevOpsRequest, DevOpsResponse
+from app.jwt_manager import jwt_manager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -33,9 +34,53 @@ async def health_check():
     return {"status": "healthy"}
 
 
+@app.post("/api/generate-token")
+async def generate_token(
+    x_parse_rest_api_key: Optional[str] = Header(None, alias=API_KEY_HEADER)
+):
+    """
+    Generate a unique JWT token for API requests
+    Requires valid API Key
+    
+    Returns:
+        JWT token with expiry information
+    """
+    if not x_parse_rest_api_key or x_parse_rest_api_key != VALID_API_KEY:
+        logger.warning("Invalid API Key for token generation")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API Key"
+        )
+    
+    token = jwt_manager.generate_jwt()
+    return {
+        "token": token,
+        "type": "Bearer",
+        "expires_in": jwt_manager.token_expiry_seconds,
+        "usage": "Include in X-JWT-KWY header for /DevOps endpoint"
+    }
+
+
+@app.get("/api/token-stats")
+async def token_stats(
+    x_parse_rest_api_key: Optional[str] = Header(None, alias=API_KEY_HEADER)
+):
+    """
+    Get JWT token usage statistics
+    Requires valid API Key
+    """
+    if not x_parse_rest_api_key or x_parse_rest_api_key != VALID_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API Key"
+        )
+    
+    return jwt_manager.get_stats()
+
+
 def validate_security_headers(api_key: Optional[str], jwt_token: Optional[str]) -> None:
     """
-    Validate required security headers
+    Validate required security headers and ensure JWT is unique
     
     Args:
         api_key: API Key from header
@@ -57,6 +102,9 @@ def validate_security_headers(api_key: Optional[str], jwt_token: Optional[str]) 
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing JWT token"
         )
+    
+    # Validate JWT and ensure it's unique (not used before)
+    jwt_manager.validate_jwt(jwt_token)
 
 
 def build_success_message(recipient_name: str) -> str:

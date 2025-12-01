@@ -7,7 +7,9 @@ on:
   workflow_dispatch:  # Manual trigger
 
 env:
-  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/banking-devops-api
+  ACR_NAME: acrbankingdevops
+  ACR_LOGIN_SERVER: acrbankingdevops.azurecr.io
+  DOCKER_IMAGE: acrbankingdevops.azurecr.io/banking-devops-api
   AKS_CLUSTER_NAME: aks-banking-cluster
   AKS_RESOURCE_GROUP: rg-banking-devops
   PYTHON_VERSION: '3.9'
@@ -33,25 +35,36 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Linter (Pylint)
+      - name: Run Linter (Pylint) - Strict Mode
         working-directory: ./app
         run: |
-          pylint app/*.py --disable=C0114,C0115,C0116 --max-line-length=120 || true
-        continue-on-error: true
+          pylint *.py --disable=C0114,C0115,C0116 --max-line-length=120 --fail-under=8.0
 
-      - name: Run Tests (Pytest)
+      - name: Run Tests with Coverage (Pytest)
         working-directory: ./app
         run: |
-          pytest test_main.py -v --tb=short
+          pytest test_main.py -v --tb=short --cov=. --cov-report=term-missing --cov-report=xml --cov-report=html --cov-fail-under=80
+      
+      - name: Upload Coverage Report
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: ./app/coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+        continue-on-error: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+      - name: Azure Login
+        uses: azure/login@v2
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to Azure Container Registry
+        run: |
+          az acr login --name ${{ env.ACR_NAME }}
 
       - name: Extract metadata for Docker
         id: meta

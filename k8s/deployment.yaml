@@ -26,7 +26,7 @@ spec:
     spec:
       containers:
       - name: banking-api
-        image: your-dockerhub-username/banking-devops-api:latest  # Replace with your Docker Hub image
+        image: acrbankingdevops.azurecr.io/banking-devops-api:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 8000

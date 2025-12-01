@@ -35,7 +35,9 @@ Microservicio REST seguro para operaciones bancarias, desarrollado siguiendo pri
 
 ### Seguridad
 - ✅ Validación de API Key (`X-Parse-REST-API-Key`)
-- ✅ Validación de JWT Token (`X-JWT-KWY`)
+- ✅ Validación de JWT Token único por transacción (`X-JWT-KWY`)
+- ✅ API Manager para generación de tokens JWT
+- ✅ Cache en memoria para prevenir reutilización de tokens
 - ✅ Autenticación HTTP 401 para credenciales inválidas
 - ✅ Contenedor ejecutado con usuario no privilegiado
 
@@ -46,10 +48,12 @@ Microservicio REST seguro para operaciones bancarias, desarrollado siguiendo pri
 - ✅ Type hints en todas las funciones
 
 ### TDD (Test Driven Development)
-- ✅ 15+ tests automatizados con `pytest`
+- ✅ 19 tests automatizados con `pytest`
+- ✅ **86.67% de cobertura de código** (pytest-cov)
 - ✅ Cobertura de casos happy path y edge cases
-- ✅ Tests de seguridad y validación
-- ✅ Tests ejecutados en CI/CD
+- ✅ Tests de seguridad, JWT único y validación
+- ✅ Tests ejecutados en CI/CD con umbral mínimo del 80%
+- ✅ Static code analysis con Pylint (calificación mínima 8.0)
 
 ### Alta Disponibilidad
 - ✅ 2 réplicas mínimas en Kubernetes
@@ -244,12 +248,35 @@ curl -X POST \
 
 ### Comando oficial de prueba
 
-Una vez desplegado, usa el siguiente comando `curl` para probar la API:
+**⚠️ IMPORTANTE:** Los JWT tokens son únicos por transacción. Debes generar un nuevo token para cada request.
+
+#### 1. Generar un JWT Token
 
 ```bash
+# Generar token (reemplaza EXTERNAL_IP con tu IP pública)
 curl -X POST \
   -H "X-Parse-REST-API-Key: 2f5ae96c-b558-4c7b-a590-a501ae1c3f6c" \
-  -H "X-JWT-KWY: un_token_valido" \
+  http://$EXTERNAL_IP/api/generate-token
+
+# Respuesta:
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "type": "Bearer",
+  "expires_in": 300,
+  "usage": "Include in X-JWT-KWY header for /DevOps endpoint"
+}
+```
+
+#### 2. Usar el token en tu request
+
+```bash
+# Guarda el token en una variable
+JWT_TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+# Usar el token (cada token solo puede usarse UNA VEZ)
+curl -X POST \
+  -H "X-Parse-REST-API-Key: 2f5ae96c-b558-4c7b-a590-a501ae1c3f6c" \
+  -H "X-JWT-KWY: $JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "message": "This is a test",
@@ -257,7 +284,7 @@ curl -X POST \
     "from": "Rita Asturia",
     "timeToLifeSec": 45
   }' \
-  http://localhost:80/DevOps
+  http://$EXTERNAL_IP/DevOps
 ```
 
 **Respuesta esperada:**
@@ -265,6 +292,41 @@ curl -X POST \
 {
   "message": "Hello Juan Perez your message will be send"
 }
+```
+
+**⚠️ Si intentas reusar el mismo token:**
+```json
+{
+  "detail": "JWT token already used"
+}
+```
+
+#### 3. Script completo para pruebas
+
+```bash
+#!/bin/bash
+EXTERNAL_IP="<tu-ip-publica>"
+API_KEY="2f5ae96c-b558-4c7b-a590-a501ae1c3f6c"
+
+# Generar token
+echo "Generando token..."
+TOKEN_RESPONSE=$(curl -s -X POST \
+  -H "X-Parse-REST-API-Key: $API_KEY" \
+  http://$EXTERNAL_IP/api/generate-token)
+
+JWT_TOKEN=$(echo $TOKEN_RESPONSE | jq -r '.token')
+echo "Token: $JWT_TOKEN"
+
+# Usar token
+echo "Enviando request..."
+curl -X POST \
+  -H "X-Parse-REST-API-Key: $API_KEY" \
+  -H "X-JWT-KWY: $JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"This is a test","to":"Juan Perez","from":"Rita Asturia","timeToLifeSec":45}' \
+  http://$EXTERNAL_IP/DevOps
+
+echo ""
 ```
 
 ### Casos de prueba adicionales
@@ -285,17 +347,47 @@ curl -X POST \
   -H "X-Parse-REST-API-Key: 2f5ae96c-b558-4c7b-a590-a501ae1c3f6c" \
   -H "Content-Type: application/json" \
   -d '{"message":"test","to":"Juan","from":"Rita","timeToLifeSec":45}' \
-  http://localhost:80/DevOps
+  http://$EXTERNAL_IP/DevOps
 ```
 
-#### 3. Método GET (debe retornar "ERROR")
+#### 3. Reusar JWT Token (debe retornar 401)
 ```bash
-curl -X GET http://localhost:80/DevOps
+# Generar token
+JWT_TOKEN=$(curl -s -X POST \
+  -H "X-Parse-REST-API-Key: 2f5ae96c-b558-4c7b-a590-a501ae1c3f6c" \
+  http://$EXTERNAL_IP/api/generate-token | jq -r '.token')
+
+# Primer uso: OK
+curl -X POST \
+  -H "X-Parse-REST-API-Key: 2f5ae96c-b558-4c7b-a590-a501ae1c3f6c" \
+  -H "X-JWT-KWY: $JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"test","to":"Juan","from":"Rita","timeToLifeSec":45}' \
+  http://$EXTERNAL_IP/DevOps
+
+# Segundo uso: FALLA (401 - token already used)
+curl -X POST \
+  -H "X-Parse-REST-API-Key: 2f5ae96c-b558-4c7b-a590-a501ae1c3f6c" \
+  -H "X-JWT-KWY: $JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"test","to":"Juan","from":"Rita","timeToLifeSec":45}' \
+  http://$EXTERNAL_IP/DevOps
 ```
 
-#### 4. Health Check
+#### 4. Método GET (debe retornar "ERROR")
 ```bash
-curl http://localhost:80/health
+curl -X GET http://$EXTERNAL_IP/DevOps
+```
+
+#### 5. Health Check
+```bash
+curl http://$EXTERNAL_IP/health
+```
+
+#### 6. Ver estadísticas de tokens
+```bash
+curl -H "X-Parse-REST-API-Key: 2f5ae96c-b558-4c7b-a590-a501ae1c3f6c" \
+  http://$EXTERNAL_IP/api/token-stats
 ```
 
 ## 🔄 CI/CD Pipeline

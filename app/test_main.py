@@ -5,14 +5,30 @@ Following TDD principles with comprehensive test coverage
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app, VALID_API_KEY
+from app.jwt_manager import jwt_manager
 
 client = TestClient(app)
 
+
+@pytest.fixture(autouse=True)
+def reset_jwt_manager():
+    """Reset JWT manager cache before each test"""
+    jwt_manager._used_tokens.clear()
+    yield
+
+
+def get_valid_jwt():
+    """Generate a valid JWT token for testing"""
+    return jwt_manager.generate_jwt()
+
+
 # Test data constants
-VALID_HEADERS = {
-    "X-Parse-REST-API-Key": VALID_API_KEY,
-    "X-JWT-KWY": "valid_jwt_token_here"
-}
+def get_valid_headers():
+    """Get valid headers with fresh JWT"""
+    return {
+        "X-Parse-REST-API-Key": VALID_API_KEY,
+        "X-JWT-KWY": get_valid_jwt()
+    }
 
 VALID_PAYLOAD = {
     "message": "This is a test",
@@ -30,7 +46,7 @@ class TestDevOpsEndpointHappyPath:
         response = client.post(
             "/DevOps",
             json=VALID_PAYLOAD,
-            headers=VALID_HEADERS
+            headers=get_valid_headers()
         )
         
         assert response.status_code == 200
@@ -46,7 +62,7 @@ class TestDevOpsEndpointHappyPath:
         response = client.post(
             "/DevOps",
             json=custom_payload,
-            headers=VALID_HEADERS
+            headers=get_valid_headers()
         )
         
         assert response.status_code == 200
@@ -111,7 +127,7 @@ class TestInvalidHttpMethods:
     
     def test_get_request_returns_error(self):
         """Test that GET request returns plain text ERROR"""
-        response = client.get("/DevOps", headers=VALID_HEADERS)
+        response = client.get("/DevOps")
         
         assert response.status_code == 400
         assert response.text == "ERROR"
@@ -120,8 +136,7 @@ class TestInvalidHttpMethods:
         """Test that PUT request returns plain text ERROR"""
         response = client.put(
             "/DevOps",
-            json=VALID_PAYLOAD,
-            headers=VALID_HEADERS
+            json=VALID_PAYLOAD
         )
         
         assert response.status_code == 400
@@ -129,7 +144,7 @@ class TestInvalidHttpMethods:
     
     def test_delete_request_returns_error(self):
         """Test that DELETE request returns plain text ERROR"""
-        response = client.delete("/DevOps", headers=VALID_HEADERS)
+        response = client.delete("/DevOps")
         
         assert response.status_code == 400
         assert response.text == "ERROR"
@@ -138,8 +153,7 @@ class TestInvalidHttpMethods:
         """Test that PATCH request returns plain text ERROR"""
         response = client.patch(
             "/DevOps",
-            json=VALID_PAYLOAD,
-            headers=VALID_HEADERS
+            json=VALID_PAYLOAD
         )
         
         assert response.status_code == 400
@@ -178,7 +192,7 @@ class TestDataValidation:
         response = client.post(
             "/DevOps",
             json=invalid_payload,
-            headers=VALID_HEADERS
+            headers=get_valid_headers()
         )
         
         assert response.status_code == 422
@@ -191,7 +205,7 @@ class TestDataValidation:
         response = client.post(
             "/DevOps",
             json=invalid_payload,
-            headers=VALID_HEADERS
+            headers=get_valid_headers()
         )
         
         assert response.status_code == 422
@@ -206,3 +220,47 @@ class TestHealthCheck:
         
         assert response.status_code == 200
         assert response.json() == {"status": "healthy"}
+
+
+class TestJWTValidation:
+    """Test cases for JWT validation and uniqueness"""
+    
+    def test_jwt_token_can_only_be_used_once(self):
+        """Test that JWT token can only be used for one transaction"""
+        token = get_valid_jwt()
+        headers = {
+            "X-Parse-REST-API-Key": VALID_API_KEY,
+            "X-JWT-KWY": token
+        }
+        
+        # First request should succeed
+        response1 = client.post("/DevOps", json=VALID_PAYLOAD, headers=headers)
+        assert response1.status_code == 200
+        
+        # Second request with same token should fail
+        response2 = client.post("/DevOps", json=VALID_PAYLOAD, headers=headers)
+        assert response2.status_code == 401
+        assert "already used" in response2.json()["detail"].lower()
+    
+    def test_generate_token_endpoint_requires_api_key(self):
+        """Test that token generation requires valid API key"""
+        response = client.post("/api/generate-token")
+        assert response.status_code == 401
+    
+    def test_generate_token_with_valid_api_key(self):
+        """Test token generation with valid API key"""
+        headers = {"X-Parse-REST-API-Key": VALID_API_KEY}
+        response = client.post("/api/generate-token", headers=headers)
+        
+        assert response.status_code == 200
+        assert "token" in response.json()
+        assert "expires_in" in response.json()
+        assert response.json()["type"] == "Bearer"
+    
+    def test_token_stats_endpoint(self):
+        """Test token statistics endpoint"""
+        headers = {"X-Parse-REST-API-Key": VALID_API_KEY}
+        response = client.get("/api/token-stats", headers=headers)
+        
+        assert response.status_code == 200
+        assert "total_used_tokens" in response.json()
