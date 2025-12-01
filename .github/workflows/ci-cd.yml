@@ -98,8 +98,8 @@ jobs:
     name: Deploy to AKS
     needs: build-and-test
     runs-on: ubuntu-latest
-    # Only deploy on master branch or manual trigger
-    if: github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
+    # Only deploy on main branch or manual trigger
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     
     steps:
       - name: Checkout code
@@ -165,7 +165,7 @@ jobs:
     name: Security Scan
     needs: build-and-test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/master'
+    if: github.ref == 'refs/heads/main'
     
     steps:
       - name: Checkout code
