@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: banking-devops-api
-  namespace: default
+  namespace: banking-devops
   labels:
     app: banking-devops
     tier: backend

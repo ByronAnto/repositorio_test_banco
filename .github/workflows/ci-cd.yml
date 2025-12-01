@@ -136,13 +136,13 @@ jobs:
             k8s/hpa.yaml
           images: |
             ${{ env.DOCKER_IMAGE }}:latest
-          namespace: default
+          namespace: banking-devops
 
       - name: Verify deployment
         run: |
-          kubectl rollout status deployment/banking-devops-api -n default --timeout=5m
-          kubectl get pods -n default -l app=banking-devops
-          kubectl get service banking-devops-service -n default
+          kubectl rollout status deployment/banking-devops-api -n banking-devops --timeout=5m
+          kubectl get pods -n banking-devops -l app=banking-devops
+          kubectl get service banking-devops-service -n banking-devops
 
       - name: Get LoadBalancer IP
         id: get-ip
@@ -150,7 +150,7 @@ jobs:
         run: |
           echo "Waiting for LoadBalancer IP..."
           for i in {1..30}; do
-            EXTERNAL_IP=$(kubectl get service banking-devops-service -n default -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            EXTERNAL_IP=$(kubectl get service banking-devops-service -n banking-devops -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
             if [ ! -z "$EXTERNAL_IP" ]; then
               echo "LoadBalancer IP: $EXTERNAL_IP"
               echo "external_ip=$EXTERNAL_IP" >> $GITHUB_OUTPUT

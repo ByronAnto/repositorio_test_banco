@@ -2,7 +2,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: banking-devops-hpa
-  namespace: default
+  namespace: banking-devops
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
